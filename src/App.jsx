@@ -1,19 +1,13 @@
-import React, { useState, useRef, useMemo } from "react";
+import React, { useState, useRef } from "react";
 import { ethers } from "ethers";
 import { Turnstile } from "@marsidev/react-turnstile";
 
-// Edit this to your deployed Cloudflare Worker endpoint
 const WORKER_URL = import.meta.env.VITE_WORKER_URL;
 const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY;
 const SCAN_BASE_URL = import.meta.env.VITE_SCAN_BASE_URL || "https://amoy.polygonscan.com/tx/";
 
-if (!WORKER_URL) {
-  throw new Error("VITE_WORKER_URL is not set in environment variables");
-}
-
-if (!TURNSTILE_SITE_KEY) {
-  throw new Error("VITE_TURNSTILE_SITE_KEY is not set in environment variables");
-}
+if (!WORKER_URL) throw new Error("VITE_WORKER_URL is not set");
+if (!TURNSTILE_SITE_KEY) throw new Error("VITE_TURNSTILE_SITE_KEY is not set");
 
 function hexFromBuffer(buffer) {
   return Array.from(new Uint8Array(buffer))
@@ -40,10 +34,34 @@ export default function App() {
   const [registerResult, setRegisterResult] = useState(null);
   const [verifyResult, setVerifyResult] = useState(null);
   const turnstileRef = useRef(null);
-  const fileInputRef = useRef(null);
+  const [dragActive, setDragActive] = useState(false);
+  const inputRef = useRef(null);
+  const [selectedFileName, setSelectedFileName] = useState("");
+
+  const onDrag = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  };
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    const files = e.dataTransfer.files;
+    if (files && files[0]) {
+      inputRef.current.files = files;
+      onFileChange({ target: { files } });
+    }
+  };
 
   const onFileChange = async (e) => {
     const f = e.target.files?.[0];
+    setSelectedFileName(f ? f.name : "");
     setHash("");
     setSig("");
     setStatus("");
@@ -64,7 +82,6 @@ export default function App() {
   const onSign = async () => {
     if (!hash) return setStatus("No hash to sign");
     if (!window.ethereum) return setStatus("MetaMask not found");
-
     try {
       setStatus("Requesting signature from wallet...");
       const provider = new ethers.BrowserProvider(window.ethereum);
@@ -109,7 +126,6 @@ export default function App() {
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
-      // Reset Turnstile after use
       turnstileRef.current?.reset();
       setTurnstileToken("");
     }
@@ -123,15 +139,12 @@ export default function App() {
     try {
       const verifyUrl = new URL(WORKER_URL);
       verifyUrl.searchParams.append("hash", hash);
-
       const res = await fetch(verifyUrl.toString(), { method: "GET" });
       const body = await res.json();
-
       if (!res.ok) {
         setStatus(`Server error: ${body.error || res.statusText}`);
         return;
       }
-
       setVerifyResult(body);
       setStatus(body.found ? "Verification complete: Proof found." : "Verification complete: Proof not found.");
     } catch (err) {
@@ -140,57 +153,104 @@ export default function App() {
   };
 
   return (
-    <div style={{ maxWidth: 760, margin: "24px auto", fontFamily: "sans-serif", lineHeight: 1.6 }}>
-      <h1 style={{ fontSize: 28, marginBottom: 12 }}>Proof Insight — Frontend (Prototype)</h1>
-
-      {/* --- Step 1: File Selection --- */}
-      <div style={{ marginBottom: 12 }}>
-        <label style={{ display: "block", marginBottom: 6 }}><strong>1. Choose a file</strong> (hashed locally)</label>
-        <input type="file" onChange={onFileChange} />
+    <div className="max-w-3xl mx-auto px-6 py-10 text-gray-800 font-sans">
+      {/* --- Info Card --- */}
+      <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-5 mb-6 text-sm text-gray-600 space-y-2">
+        <h1 className="text-2xl font-semibold text-gray-900">Proof Insight</h1>
+        <p>Securely prove your document’s integrity — without uploading the file.</p>
+        <ul className="list-disc pl-5 space-y-1">
+          <li>Your file never leaves your browser (only SHA-256 hash is processed).</li>
+          <li>Free users can register <strong>up to 10 proofs per address</strong>.</li>
+          <li>Steps: Choose file → Sign → Submit → Verify.</li>
+        </ul>
       </div>
 
-      <div style={{ background: "#f7f7f8", padding: 12, borderRadius: 8, marginBottom: 12 }}>
-        <div><strong>File Hash (SHA-256)</strong></div>
-        <div style={{ fontFamily: "monospace", wordBreak: "break-all" }}>{hash || "—"}</div>
-      </div>
-
-      {/* --- Step 2: Register or Verify --- */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <button onClick={onSign} disabled={!hash || !!sig} style={{ padding: "8px 12px" }}>2a. Sign with Wallet</button>
-        <button onClick={onSubmit} disabled={!sig || !turnstileToken} style={{ padding: "8px 12px" }}>2b. Submit Proof</button>
-        <button onClick={onVerify} disabled={!hash} style={{ padding: "8px 12px", marginLeft: 'auto', background: '#28a745' }}>Verify Proof</button>
-      </div>
-
-      {/* --- Turnstile Widget --- */}
-      <div style={{ display: 'flex', justifyContent: 'center', margin: '20px 0' }}>
-        <Turnstile
-          ref={turnstileRef}
-          siteKey={TURNSTILE_SITE_KEY}
-          onSuccess={(token) => setTurnstileToken(token)}
+      {/* Step 1 */}
+      <h2 className="text-lg font-semibold text-gray-900 mb-2">Step 1. Select your file</h2>
+      <div
+        onDragEnter={onDrag}
+        onDragOver={onDrag}
+        onDragLeave={onDrag}
+        onDrop={onDrop}
+        className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${dragActive ? "border-blue-400 bg-blue-50" : "border-gray-300 bg-gray-50"
+          }`}
+        onClick={() => inputRef.current?.click()}
+      >
+        <p className="text-gray-700 text-sm">
+          {dragActive ? "Drop your file here..." : "Drag & drop your file here or click to browse"}
+        </p>
+        <input
+          ref={inputRef}
+          type="file"
+          onChange={onFileChange}
+          className="hidden"
         />
       </div>
+      {selectedFileName && (
+        <div className="mt-3 flex items-center justify-between bg-white border rounded px-3 py-2 text-sm">
+          <span className="text-gray-700 truncate">{selectedFileName}</span>
+          <button
+            onClick={() => {
+              setSelectedFileName("");
+              setHash("");
+              fileInputRef.current.value = "";
+            }}
+            className="text-red-500 hover:text-red-600 text-xs"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+      <div className="mt-3">
+        <div className="text-gray-600 text-sm font-medium">File Hash (SHA-256)</div>
+        <div className="font-mono text-xs break-all bg-white border rounded p-2 mt-1">
+          {hash || "—"}
+        </div>
+      </div>
 
-      {/* --- Status & Results --- */}
-      <div style={{ marginTop: 12 }}>
-        <div style={{ color: "#666", minHeight: '24px', fontStyle: 'italic' }}><strong>Status:</strong> {status}</div>
+      {/* Step 2 */}
+      <h2 className="text-lg font-semibold text-gray-900 mb-2">Step 2. Sign & Register Proof</h2>
+      <div className="flex flex-wrap gap-3 mb-4">
+        <button
+          onClick={onSign}
+          disabled={!hash || !!sig}
+          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+        >
+          Sign with Wallet
+        </button>
+        <button
+          onClick={onSubmit}
+          disabled={!sig || !turnstileToken}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
+        >
+          Submit Proof
+        </button>
+        <button
+          onClick={onVerify}
+          disabled={!hash}
+          className="ml-auto px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+        >
+          Verify Proof
+        </button>
+      </div>
 
-        <div><strong>User (address)</strong></div>
-        <div style={{ fontFamily: "monospace" }}>{userAddr || "—"}</div>
-
-        <div style={{ marginTop: 8 }}><strong>Signature</strong></div>
-        <div style={{ fontFamily: "monospace", wordBreak: "break-all" }}>{sig || "—"}</div>
+      {/* Status */}
+      <div className="mt-6 bg-gray-50 border rounded-lg p-4 space-y-2 text-sm">
+        <div><strong>Status:</strong> {status || "—"}</div>
+        <div><strong>User (address):</strong> <span className="font-mono">{userAddr || "—"}</span></div>
+        <div><strong>Signature:</strong> <div className="font-mono break-all">{sig || "—"}</div></div>
 
         {registerResult && (
-          <div style={{ marginTop: 8, background: '#e9f7ef', padding: 8, borderRadius: 4 }}>
-            <strong>Registration Result:</strong>
-            <div>Tx Hash: <a href={`${SCAN_BASE_URL}${registerResult.txHash}`} target="_blank" rel="noopener noreferrer">{registerResult.txHash}</a></div>
+          <div className="bg-green-50 border border-green-200 rounded-md p-3 mt-2">
+            <strong>Registration Result</strong>
+            <div>Tx Hash: <a href={`${SCAN_BASE_URL}${registerResult.txHash}`} className="text-blue-600 underline" target="_blank" rel="noopener noreferrer">{registerResult.txHash}</a></div>
             <div>Block: {registerResult.blockNumber}</div>
           </div>
         )}
 
         {verifyResult && (
-          <div style={{ marginTop: 8, background: '#eef2f7', padding: 8, borderRadius: 4 }}>
-            <strong>Verification Result:</strong>
+          <div className="bg-blue-50 border border-blue-200 rounded-md p-3 mt-2">
+            <strong>Verification Result</strong>
             {verifyResult.found ? (
               <>
                 <div>Owner: {verifyResult.owner}</div>
@@ -202,6 +262,12 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* Turnstile */}
+      <div className="flex justify-center my-4">
+        <Turnstile ref={turnstileRef} siteKey={TURNSTILE_SITE_KEY} onSuccess={setTurnstileToken} />
+      </div>
+
     </div>
   );
 }
